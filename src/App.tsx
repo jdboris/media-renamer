@@ -2,7 +2,6 @@ import React from "react";
 import "./App.css";
 import { stringSimilarity } from "./utils.js";
 import substrings from "common-substrings";
-import { OS } from "opensubtitles-api";
 import { API_KEY } from "./secret.js";
 
 const URL = "http://api.themoviedb.org/3/";
@@ -57,6 +56,7 @@ class App extends React.Component {
     isComplete: false,
     isCanceled: false,
     fileCheckedCount: 0,
+    shouldDeleteJunk: false,
   };
 
   shouldCancel = false;
@@ -137,11 +137,11 @@ class App extends React.Component {
   };
 
   renameFiles = () => {
-    this.reset().then(() => {
+    this.reset().then(async () => {
       if (this.state.mediaType == MediaType.SHOW) {
         this.renameSeries();
       } else if (this.state.mediaType == MediaType.MOVIE) {
-        this.renameMovies();
+        await this.renameMovies();
       }
     });
   };
@@ -367,7 +367,7 @@ class App extends React.Component {
 
       this.setState({
         unmatchedEpisodes: unmatchedEpisodes,
-        complete: true,
+        isComplete: true,
       });
     }
   };
@@ -379,6 +379,8 @@ class App extends React.Component {
     const OTHER_CHARACTERS_REGEX = /[`~@#$%^&*(){}[\],;"]/g;
     const YEAR_REGEX = /([1-2]{1}[0-9]{3})/;
     const FILE_EXTENSION_REGEX = /(?:\.([^.]+))?$/;
+    const SUBTITLE_FILE_EXTENSION_REGEX = /(?:\.([^.]+)\.([^.]+))?$/;
+    const SUBTITLE_EXTENSIONS = [".srt", ".smi", ".ssa", ".ass", ".vtt"];
 
     for (let i = 0; i < files.length; i++) {
       if (this.shouldCancel) {
@@ -389,13 +391,34 @@ class App extends React.Component {
       await this.setStateAsync({ fileCheckedCount: i + 1 });
 
       let file = files[i];
+      let extension = file.name.match(FILE_EXTENSION_REGEX)![0];
+
       if (window.fs.existsSync(file.path)) {
         // Delete all non-video files (existing subtitles, posters, etc)
         if (file.type.includes("video") == false) {
-          try {
-            window.fs.unlinkSync(file.path);
-          } catch (err: any) {
-            console.error(err.toString());
+          if (this.state.shouldDeleteJunk) {
+            if (SUBTITLE_EXTENSIONS.includes(extension)) {
+              let pathWithoutExtension = file.path.replace(
+                SUBTITLE_FILE_EXTENSION_REGEX,
+                ""
+              );
+
+              let matchingVideoFile = files.find((other) => {
+                let otherPath = other.path.replace(FILE_EXTENSION_REGEX, "");
+                return other != file && pathWithoutExtension == otherPath;
+              });
+
+              // If this subtitle file has a matching video file (same path/name)
+              if (matchingVideoFile) {
+                continue;
+              }
+            }
+
+            try {
+              window.fs.unlinkSync(file.path);
+            } catch (err: any) {
+              console.error(err.toString());
+            }
           }
 
           continue;
@@ -448,7 +471,6 @@ class App extends React.Component {
             ],
           });
         } else {
-          let extension = file.name.match(FILE_EXTENSION_REGEX)![0];
           let year = match.release_date
             ? match.release_date.split("-")[0]
             : null;
@@ -570,7 +592,7 @@ class App extends React.Component {
     }
 
     this.setState({
-      complete: true,
+      isComplete: true,
     });
   };
 
@@ -608,7 +630,7 @@ class App extends React.Component {
           newNames: [],
           inputKey: Date.now(),
           renameAttempts: [],
-          complete: false,
+          isComplete: false,
           isCanceled: false,
           fileCheckedCount: 0,
         },
@@ -627,7 +649,6 @@ class App extends React.Component {
         >
           Cancel
         </button>
-
         <input
           key={this.state.inputKey}
           type="file"
@@ -637,9 +658,7 @@ class App extends React.Component {
           multiple
           onChange={this.selectFiles}
         />
-
         <button onClick={this.renameFiles}>Rename All</button>
-
         <select
           value={this.state.mediaType}
           onChange={(event) => {
@@ -649,6 +668,20 @@ class App extends React.Component {
           <option value={MediaType.SHOW}>Show</option>
           <option value={MediaType.MOVIE}>Movie</option>
         </select>
+
+        {this.state.mediaType == MediaType.MOVIE ? (
+          <label>
+            <input
+              type="checkbox"
+              onChange={(event) => {
+                this.setState({ shouldDeleteJunk: event.target.checked });
+              }}
+            />
+            Delete Junk
+          </label>
+        ) : (
+          ""
+        )}
 
         {this.state.mediaType == MediaType.SHOW ? (
           <select
@@ -664,15 +697,12 @@ class App extends React.Component {
         ) : (
           ""
         )}
-
         {this.state.fileCheckedCount ? (
           <h5 className="red">Files checked: {this.state.fileCheckedCount}</h5>
         ) : (
           ""
         )}
-
         {this.state.isCanceled ? <h1 className="error">Canceled!</h1> : ""}
-
         {this.state.folderPath ? (
           <div>
             <strong>Folder: </strong> {this.state.folderPath}
@@ -680,7 +710,6 @@ class App extends React.Component {
         ) : (
           ""
         )}
-
         <div>
           {this.state.renameAttempts.length ? (
             <div>
